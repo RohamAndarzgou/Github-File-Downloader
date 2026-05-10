@@ -206,7 +206,7 @@ jobs:
                 fi
               fi
 
-              # aria2c failed, clean up and try curl fallback
+              # aria2c failed, clean up and try curl
               rm -f "tmp_downloads/$FILENAME" "tmp_downloads/$FILENAME.aria2"
               echo "aria2c failed or file empty, trying curl fallback..."
 
@@ -276,6 +276,7 @@ jobs:
 
               if [ ${#VALID_FILES[@]} -gt 0 ]; then
                 # Use standard zip split volumes: file.zip, file.z01, file.z02 ...
+                # Compatible with WinRAR, 7-Zip, Ark (Linux), Windows Explorer
                 ARCHIVE_PATH="$BACKUP_DIR/$FOLDER_NAME/${ARCHIVE_NAME}.zip"
                 if [ -n "$ZIP_PASSWORD" ]; then
                   zip -j -P "${ZIP_PASSWORD}" -s ${SPLIT_THRESHOLD_MB}m \
@@ -383,65 +384,111 @@ jobs:
               FOLDER_NAME=$(get_unique_folder "$BACKUP_DIR" "$BASENAME_NO_EXT")
               mkdir -p "$BACKUP_DIR/$FOLDER_NAME"
 
-              # --- START OF FIX: Implementing Hierarchical Partitioning Logic ---
+              FOLDER_ENCODED=$(urlencode "${FOLDER_NAME}")
+
               if [ "$SIZE" -gt "$SPLIT_THRESHOLD_BYTES" ]; then
-                echo "WARNING: File $BASENAME is $(( SIZE / 1024 / 1024 ))MB. Splitting into manageable parts."
+                echo "$BASENAME is $(( SIZE / 1024 / 1024 ))MB - splitting into ${SPLIT_THRESHOLD_MB}MB parts"
 
-                # Calculate the number of required sets (e.g., if size > 150MB and threshold=45MB, we need at least 4 sets)
-                # We use a safety factor to ensure we don't exceed ~90-100 files per set.
-                MAX_FILES_PER_SET=80 # Target max parts per directory/set
-                TOTAL_PARTS_ESTIMATE=$(( (SIZE + SPLIT_THRESHOLD_BYTES - 1) / SPLIT_THRESHOLD_BYTES ))
+                # Use standard zip split volumes: file.zip, file.z01, file.z02 ...
+                # Compatible with WinRAR, 7-Zip, Ark (Linux), Windows Explorer
+                ARCHIVE_BASE="$BACKUP_DIR/${FOLDER_NAME}/${FOLDER_NAME}"
 
-                # Determine the number of sets needed, ensuring we don't create too many directories.
-                NUM_SETS=$(( (TOTAL_PARTS_ESTIMATE + MAX_FILES_PER_SET - 1) / MAX_FILES_PER_SET ))
-                if [ "$NUM_SETS" -eq 0 ]; then NUM_SETS=1; fi
+                if [ -n "$ZIP_PASSWORD" ]; then
+                  zip -j -P "${ZIP_PASSWORD}" -s ${SPLIT_THRESHOLD_MB}m \
+                    "${ARCHIVE_BASE}.zip" \
+                    "$FILE"
+                else
+                  zip -j -s ${SPLIT_THRESHOLD_MB}m \
+                    "${ARCHIVE_BASE}.zip" \
+                    "$FILE"
+                fi
 
-                echo "Estimated total parts: $TOTAL_PARTS_ESTIMATE. Creating $NUM_SETS sets."
+                PARTS_COUNT=$(ls "$BACKUP_DIR/${FOLDER_NAME}/"*.zip "$BACKUP_DIR/${FOLDER_NAME}/"*.z[0-9]* 2>/dev/null | wc -l)
+                echo "Parts created in folder $BACKUP_DIR/$FOLDER_NAME: $PARTS_COUNT files"
 
-                # Temporary file to hold the original path for later processing
-                TEMP_FILE_LIST="$BACKUP_DIR/${FOLDER_NAME}_filelist.txt"
-                echo "$FILE" > "$TEMP_FILE_LIST"
+                # Verify at least one part was created
+                if [ "$PARTS_COUNT" -eq 0 ]; then
+                  echo "ERROR: No archive parts were created for $BASENAME"
+                  continue
+                fi
 
+                # Calculate total size
+                TOTAL_SIZE=0
+                for part_file in "$BACKUP_DIR/${FOLDER_NAME}"/*; do
+                  if [ -f "$part_file" ]; then
+                    PART_SIZE=$(stat -c%s "$part_file" 2>/dev/null || echo 0)
+                    TOTAL_SIZE=$((TOTAL_SIZE + PART_SIZE))
+                  fi
+                done
+                TOTAL_SIZE_MB=$(echo "scale=2; $TOTAL_SIZE / 1024 / 1024" | bc)
 
-                for ((SET=1; SET<=NUM_SETS; SET++)); do
-                    # Determine the actual range of parts for this set (this is complex to calculate perfectly without running zip, so we simplify by creating a new directory structure per set)
+                # Build download links for all parts
+                DOWNLOAD_LINKS_MD=""
+                LINK_NUM=0
+                for part_file in $(ls "$BACKUP_DIR/${FOLDER_NAME}/"*.zip "$BACKUP_DIR/${FOLDER_NAME}/"*.z[0-9]* 2>/dev/null | sort); do
+                  if [ -f "$part_file" ]; then
+                    PART_BASENAME=$(basename "$part_file")
+                    PART_ENCODED=$(urlencode "${PART_BASENAME}")
+                    RAW_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/downloads/${FOLDER_ENCODED}/${PART_ENCODED}"
+                    LINK_NUM=$((LINK_NUM + 1))
+                    DOWNLOAD_LINKS_MD="${DOWNLOAD_LINKS_MD}| ${LINK_NUM} | \`${PART_BASENAME}\` | [Download](${RAW_LINK}) |"$'\n'
+                  fi
+                done
 
-                    # Create a unique folder name for this specific part set
-                    SET_FOLDER_NAME="${FOLDER_NAME}_Set${SET}"
-                    mkdir -p "$BACKUP_DIR/$SET_FOLDER_NAME"
+                README_FILE="$BACKUP_DIR/${FOLDER_NAME}/README.md"
+                {
+                  printf '%s\n' "# ${BASENAME_NO_EXT}"
+                  printf '%s\n' ""
+                  printf '%s\n' "---"
+                  printf '%s\n' ""
+                  printf '%s\n' "## Download Information"
+                  printf '%s\n' ""
+                  printf '%s\n' "| Property | Value |"
+                  printf '%s\n' "|----------|-------|"
+                  printf '%s\n' "| **Original File** | \`${BASENAME}\` |"
+                  printf '%s\n' "| **Total Size** | **${PARTS_COUNT} parts** - **${TOTAL_SIZE_MB} MB** |"
+                  printf '%s\n' "| **Status** | **Complete (100%)** |"
+                  if [ -n "$ZIP_PASSWORD" ]; then
+                    printf '%s\n' "| **Password Protected** | **YES** |"
+                  else
+                    printf '%s\n' "| **Password Protected** | **NO** |"
+                  fi
+                  printf '%s\n' ""
+                  printf '%s\n' "---"
+                  printf '%s\n' ""
+                  printf '%s\n' "## Download Links"
+                  printf '%s\n' ""
+                  printf '%s\n' "| # | File | Link |"
+                  printf '%s\n' "|---|------|------|"
+                  printf '%s' "${DOWNLOAD_LINKS_MD}"
+                  printf '%s\n' ""
+                  printf '%s\n' "---"
+                  printf '%s\n' ""
+                  printf '%s\n' "## How to Extract"
+                  printf '%s\n' ""
+                  printf '%s\n' "1. **Download all parts** (\`.zip\`, \`.z01\`, \`.z02\`...)"
+                  printf '%s\n' "2. **Open** \`${FOLDER_NAME}.zip\` with WinRAR, 7-Zip, Ark, or any standard zip tool"
+                  printf '%s\n' "3. **Extract** — all parts combine automatically"
+                  if [ -n "$ZIP_PASSWORD" ]; then
+                    printf '%s\n' "4. Enter the password when prompted"
+                  fi
+                  printf '%s\n' ""
+                  printf '%s\n' "---"
+                  printf '%s\n' ""
+                  printf '%s\n' "*This tool created by [avasam.ir](https://avasam.ir)*"
+                } > "$README_FILE"
 
-                    ARCHIVE_BASE="$BACKUP_DIR/${SET_FOLDER_NAME}/${FOLDER_NAME}"
-
-                    # Use zip to split the file into this set's parts. We rely on 'zip' handling the splitting internally, 
-                    # but we must ensure the output structure is clean for Git.
-                    if [ -n "$ZIP_PASSWORD" ]; then
-                        zip -j -P "${ZIP_PASSWORD}" -s ${SPLIT_THRESHOLD_MB}m \
-                            "${ARCHIVE_BASE}.zip" \
-                            "$FILE"
-                    else:
-                        zip -j -s ${SPLIT_THRESHOLD_MB}m \
-                            "${ARCHIVE_BASE}.zip" \
-                            "$FILE"
-                    fi
-
-                    # Note: The standard 'zip' command handles the creation of .z01, .z02 etc. 
-                    # If we run it multiple times on the same file, it will overwrite/append based on its internal logic.
-                    # For simplicity and robustness against Git limits, we treat each set as a self-contained archive block.
-
-                done # End of SET loop
-
-                echo "WARNING: Splitting complete. Check $BACKUP_DIR for multiple sets."
-
+                echo "Created README.md for split archive"
 
               else
-                # Standard zip archive (File is small enough)
                 echo "$BASENAME - creating zip archive in folder: $BACKUP_DIR/$FOLDER_NAME"
 
+                # Standard zip archive, openable by any zip tool
                 if [ -n "$ZIP_PASSWORD" ]; then
                   zip -j -P "${ZIP_PASSWORD}" \
                     "$BACKUP_DIR/${FOLDER_NAME}/${FOLDER_NAME}.zip" \
                     "$FILE"
-                else:
+                else
                   zip -j \
                     "$BACKUP_DIR/${FOLDER_NAME}/${FOLDER_NAME}.zip" \
                     "$FILE"
@@ -517,7 +564,7 @@ jobs:
           REPO_OWNER="${{ github.repository_owner }}"
           REPO_NAME="${{ github.event.repository.name }}"
           BRANCH="${GITHUB_REF_NAME}"
-          REPO_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/tree/${{ github.ref_name }}/downloads"
+          REPO_URL="${{ github.server_url }}/${{ github.repository }}/tree/${{ github.ref_name }}/downloads"
 
           # Copy backup files to downloads folder
           mkdir -p downloads
@@ -541,7 +588,7 @@ jobs:
           {
             echo "# Downloaded list :"
             echo ""
-            "$FOLDERS" | while read -r FOLDER; do
+            echo "$FOLDERS" | while read -r FOLDER; do
               if [ -n "$FOLDER" ]; then
                 FOLDER_ENCODED=$(urlencode "${FOLDER}")
                 echo "- [${FOLDER}](./${FOLDER_ENCODED})"
@@ -577,7 +624,7 @@ jobs:
             echo "## $SECTION_TITLE"
             echo ""
             COUNTER=1
-            "$FOLDERS" | while read -r FOLDER; do
+            echo "$FOLDERS" | while read -r FOLDER; do
               if [ -n "$FOLDER" ]; then
                 FOLDER_ENCODED=$(urlencode "${FOLDER}")
                 echo "${COUNTER}. [$FOLDER]($REPO_URL/$FOLDER_ENCODED)"
@@ -655,47 +702,38 @@ jobs:
 
           # Function to push files in small batches
           push_batch() {
-            local BATCH_SIZE=3  # Push 3 directories/sets at a time (This is the key change)
+            local BATCH_SIZE=3  # Push 3 files at a time (about 135MB with 45MB splits)
             local FILES=("$@")
             local BATCH_COUNT=0
-            local BATCH_DIRS=() # Now tracking directories/sets, not individual files
+            local BATCH_FILES=()
             local TOTAL_PUSHED=0
             local TOTAL_FILES=${#FILES[@]}
 
             for FILE in "${FILES[@]}"; do
-              # We assume that if we are iterating over the list of all parts, 
-              # grouping them by their parent directory structure is best.
-              # Since the input $FILES array contains ALL individual files (parts), 
-              # we must group them back into their respective directories/sets for committing.
+              BATCH_FILES+=("$FILE")
+              BATCH_COUNT=$((BATCH_COUNT + 1))
 
-              # For simplicity in this complex loop, we will commit based on the *directory* containing the file.
-              PARENT_DIR=$(dirname "$FILE")
-              if [[ ! " ${BATCH_DIRS[*]} " =~ " ${PARENT_DIR} " ]]; then
-                BATCH_DIRS+=("$PARENT_DIR")
-              fi
-
-              # Simple counter to limit batch size based on directory count, not file count.
-              if [ $(echo "${BATCH_DIRS[@]}" | wc -w) -ge $BATCH_SIZE ]; then
-                TOTAL_PUSHED=$((TOTAL_PUSHED + ${#BATCH_DIRS[@]}))
+              if [ $BATCH_COUNT -ge $BATCH_SIZE ]; then
+                TOTAL_PUSHED=$((TOTAL_PUSHED + BATCH_COUNT))
                 echo ""
-                echo ">>> Pushing batch (${TOTAL_PUSHED}/${TOTAL_FILES} files across ${#BATCH_DIRS[@]} sets)..."
+                echo ">>> Pushing batch ($TOTAL_PUSHED/$TOTAL_FILES files)..."
 
                 # Fetch and reset to latest
                 git fetch origin "$BRANCH" --quiet 2>/dev/null || true
                 git reset --hard origin/"$BRANCH" 2>/dev/null || true
 
-                # Re-copy all backup files (This is inefficient but safest for large pushes)
+                # Re-copy all backup files
                 mkdir -p downloads
                 cp -r "$BACKUP_DIR"/* downloads/ 2>/dev/null || true
 
-                # Add batch directories
-                for BDIR in "${BATCH_DIRS[@]}"; do
-                  git add "$BDIR" 2>/dev/null || true
+                # Add batch files
+                for BF in "${BATCH_FILES[@]}"; do
+                  git add "$BF" 2>/dev/null || true
                 done
 
                 # Commit batch
                 if ! git diff --cached --quiet 2>/dev/null; then
-                  git commit -m "[AVASAM] Add batch of files from ${BATCH_DIRS[*]} [skip ci]" --quiet 2>/dev/null || true
+                  git commit -m "[AVASAM] Add batch of $BATCH_COUNT files [skip ci]" --quiet 2>/dev/null || true
 
                   # Push with retries and timeout
                   local PUSH_RETRY=0
@@ -712,11 +750,11 @@ jobs:
                       git reset --hard origin/"$BRANCH" 2>/dev/null || true
                       mkdir -p downloads
                       cp -r "$BACKUP_DIR"/* downloads/ 2>/dev/null || true
-                      for BDIR in "${BATCH_DIRS[@]}"; do
-                        git add "$BDIR" 2>/dev/null || true
+                      for BF in "${BATCH_FILES[@]}"; do
+                        git add "$BF" 2>/dev/null || true
                       done
-                      if ! git diff --cached --quiet; then
-                        git commit -m "[AVASAM] Add batch of files from ${BATCH_DIRS[*]} [skip ci]" --quiet 2>/dev/null || true
+                      if ! git diff --cached --quiet 2>/dev/null; then
+                        git commit -m "[AVASAM] Add batch of $BATCH_COUNT files [skip ci]" --quiet 2>/dev/null || true
                       fi
                       sleep $((3 + RANDOM % 7))
                     fi
@@ -727,28 +765,28 @@ jobs:
                   fi
                 fi
 
-                BATCH_DIRS=() # Reset batch directories
-                TOTAL_PUSHED=$((TOTAL_PUSHED - ${#BATCH_DIRS[@]})) # Adjust counter for next loop iteration
+                BATCH_FILES=()
+                BATCH_COUNT=0
                 sleep 2
               fi
             done
 
-
-            # Push remaining files (Final Batch)
-            if [ ${#BATCH_DIRS[@]} -gt 0 ]; then
+            # Push remaining files
+            if [ ${#BATCH_FILES[@]} -gt 0 ]; then
+              TOTAL_PUSHED=$((TOTAL_PUSHED + ${#BATCH_FILES[@]}))
               echo ""
-              echo ">>> Pushing final batch (${TOTAL_PUSHED}/${TOTAL_FILES} files across ${#BATCH_DIRS[@]} sets)..."
+              echo ">>> Pushing final batch ($TOTAL_PUSHED/$TOTAL_FILES files)..."
 
               git fetch origin "$BRANCH" --quiet 2>/dev/null || true
               git reset --hard origin/"$BRANCH" 2>/dev/null || true
               mkdir -p downloads
               cp -r "$BACKUP_DIR"/* downloads/ 2>/dev/null || true
 
-              for BDIR in "${BATCH_DIRS[@]}"; do
-                git add "$BDIR" 2>/dev/null || true
+              for BF in "${BATCH_FILES[@]}"; do
+                git add "$BF" 2>/dev/null || true
               done
 
-              if ! git diff --cached --quiet; then
+              if ! git diff --cached --quiet 2>/dev/null; then
                 git commit -m "[AVASAM] Add final batch [skip ci]" --quiet 2>/dev/null || true
 
                 local PUSH_RETRY=0
@@ -764,10 +802,10 @@ jobs:
                     git reset --hard origin/"$BRANCH" 2>/dev/null || true
                     mkdir -p downloads
                     cp -r "$BACKUP_DIR"/* downloads/ 2>/dev/null || true
-                    for BDIR in "${BATCH_DIRS[@]}"; do
-                      git add "$BDIR" 2>/dev/null || true
+                    for BF in "${BATCH_FILES[@]}"; do
+                      git add "$BF" 2>/dev/null || true
                     done
-                    if ! git diff --cached --quiet; then
+                    if ! git diff --cached --quiet 2>/dev/null; then
                       git commit -m "[AVASAM] Add final batch [skip ci]" --quiet 2>/dev/null || true
                     fi
                   fi
@@ -779,6 +817,7 @@ jobs:
           # ============================================
           # MAIN INCREMENTAL PUSH LOGIC
           # ============================================
+
           echo ""
           echo "=========================================="
           echo "Starting incremental push process..."
@@ -814,7 +853,7 @@ jobs:
           if [ $TOTAL_FILES -eq 0 ]; then
             # Still push READMEs if they exist
             git add README.md downloads/README.md 2>/dev/null || true
-            if ! git diff --cached --quiet; then
+            if ! git diff --cached --quiet 2>/dev/null; then
               git commit -m "[AVASAM] Update README [skip ci]"
               timeout 120 git push origin HEAD:"$BRANCH" || true
             fi
@@ -870,7 +909,7 @@ jobs:
             echo "Large upload (${TOTAL_SIZE_MB}MB) - using incremental batch push..."
             echo ""
 
-            # Push files in batches (The logic inside push_batch is updated to handle directory sets)
+            # Push files in batches
             push_batch "${ALL_FILES[@]}"
 
             # Final push for master README

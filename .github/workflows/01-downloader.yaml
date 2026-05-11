@@ -66,8 +66,8 @@ jobs:
           URLS="${{ github.event.inputs.urls }}"
           ZIP_PASSWORD="${{ github.event.inputs.password }}"
 
-          # REDUCED to 45MB for faster, more reliable pushes
-          SPLIT_THRESHOLD_MB=45
+          # MODIFICATION: Increased split threshold to 75MB for better handling of large files.
+          SPLIT_THRESHOLD_MB=75
           SPLIT_THRESHOLD_BYTES=$(( SPLIT_THRESHOLD_MB * 1024 * 1024 ))
 
           REPO_OWNER="${{ github.repository_owner }}"
@@ -206,7 +206,7 @@ jobs:
                 fi
               fi
 
-              # aria2c failed, clean up and try curl
+              # aria2c failed, clean up and try curl fallback
               rm -f "tmp_downloads/$FILENAME" "tmp_downloads/$FILENAME.aria2"
               echo "aria2c failed or file empty, trying curl fallback..."
 
@@ -275,43 +275,79 @@ jobs:
               done
 
               if [ ${#VALID_FILES[@]} -gt 0 ]; then
-                # Use standard zip split volumes: file.zip, file.z01, file.z02 ...
-                # Compatible with WinRAR, 7-Zip, Ark (Linux), Windows Explorer
-                ARCHIVE_PATH="$BACKUP_DIR/$FOLDER_NAME/${ARCHIVE_NAME}.zip"
-                if [ -n "$ZIP_PASSWORD" ]; then
-                  zip -j -P "${ZIP_PASSWORD}" -s ${SPLIT_THRESHOLD_MB}m \
-                    "${ARCHIVE_PATH}" \
-                    "${VALID_FILES[@]}"
-                else
-                  zip -j -s ${SPLIT_THRESHOLD_MB}m \
-                    "${ARCHIVE_PATH}" \
-                    "${VALID_FILES[@]}"
+                TOTAL_RAW_SIZE=0
+                for f in "${VALID_FILES[@]}"; do
+                    FILE_SIZE=$(stat -c%s "$f")
+                    TOTAL_RAW_SIZE=$((TOTAL_RAW_SIZE + FILE_SIZE))
+                done
+
+                # --- MODIFICATION START: Handling large files via multiple parts ---
+                
+                # Calculate the number of required parts based on raw size and threshold
+                # We use 'bc' for floating point division to determine minimum parts needed.
+                NUM_PARTS=$(echo "scale=0; ($TOTAL_RAW_SIZE + $SPLIT_THRESHOLD_BYTES - 1) / $SPLIT_THRESHOLD_BYTES" | bc)
+                if [ "$NUM_PARTS" -eq 0 ]; then NUM_PARTS=1; fi
+
+                # Use the minimum of calculated parts or a reasonable cap (e.g., 200 parts to prevent excessive commits)
+                MAX_ALLOWED_PARTS=200
+                if [ "$NUM_PARTS" -gt "$MAX_ALLOWED_PARTS" ]; then
+                    echo "Warning: Calculated $NUM_PARTS parts, capping at $MAX_ALLOWED_PARTS for GitHub safety."
+                    NUM_PARTS=$MAX_ALLOWED_PARTS
                 fi
 
-                # Verify archive was created and has content
-                if [ ! -s "${ARCHIVE_PATH}" ] && [ -z "$(ls "$BACKUP_DIR/$FOLDER_NAME/"*.z[0-9]* 2>/dev/null)" ]; then
-                  echo "ERROR: Archive file is empty or not created!"
-                  rm -f "$BACKUP_DIR/$FOLDER_NAME/${ARCHIVE_NAME}".*
-                else
-                  # Build download links for all parts
-                  FOLDER_ENCODED=$(urlencode "${FOLDER_NAME}")
-                  DOWNLOAD_LINKS_MD=""
-                  LINK_NUM=0
-                  TOTAL_ARCHIVE_SIZE=0
-                  for part_file in $(ls "$BACKUP_DIR/$FOLDER_NAME/"*.zip "$BACKUP_DIR/$FOLDER_NAME/"*.z[0-9]* 2>/dev/null | sort); do
+                # Determine the actual size limit per part based on available parts
+                ACTUAL_SPLIT_THRESHOLD_BYTES=$(echo "scale=0; ($TOTAL_RAW_SIZE + $NUM_PARTS - 1) / $NUM_PARTS" | bc)
+                if [ "$ACTUAL_SPLIT_THRESHOLD_BYTES" -lt $((SPLIT_THRESHOLD_MB * 1024 * 1024 / 2)) ]; then
+                    echo "Adjusting split threshold to ${ACTUAL_SPLIT_THRESHOLD_BYTES} bytes across $NUM_PARTS parts."
+                fi
+
+                # Create the archive components iteratively
+                ARCHIVE_BASE="$BACKUP_DIR/$FOLDER_NAME"
+                ZIP_EXTENSION=".zip"
+                
+                for ((i=1; i<=NUM_PARTS; i++)); do
+                    PART_FILE="${ARCHIVE_BASE}_part${i}${ZIP_EXTENSION}"
+                    echo "Creating archive part $i of $NUM_PARTS: $PART_FILE"
+
+                    # Use zip with the calculated split size for this specific part
+                    if [ -n "$ZIP_PASSWORD" ]; then
+                        zip -j -P "${ZIP_PASSWORD}" -s ${ACTUAL_SPLIT_THRESHOLD_BYTES}b \
+                            "$PART_FILE" \
+                            "${VALID_FILES[@]}"
+                    else
+                        zip -j -s ${ACTUAL_SPLIT_THRESHOLD_BYTES}b \
+                            "$PART_FILE" \
+                            "${VALID_FILES[@]}"
+                    fi
+
+                    # Verification check (optional, but good practice)
+                    if [ ! -f "$PART_FILE" ] || [ ! -s "$PART_FILE" ]; then
+                        echo "ERROR: Failed to create archive part $i. Stopping archiving."
+                        rm -rf "$BACKUP_DIR/$FOLDER_NAME"/*
+                        exit 1
+                    fi
+                done
+
+                # --- MODIFICATION END ---
+
+
+                # Build download links for all parts (now iterating over *_part* files)
+                DOWNLOAD_LINKS_MD=""
+                LINK_NUM=0
+                TOTAL_ARCHIVE_SIZE=$TOTAL_RAW_SIZE # Use raw size as the best estimate available pre-upload
+                for part_file in $(ls "$BACKUP_DIR/$FOLDER_NAME/"*part*.zip 2>/dev/null | sort); do
                     [ -f "$part_file" ] || continue
                     PART_BASENAME=$(basename "$part_file")
                     PART_ENCODED=$(urlencode "${PART_BASENAME}")
                     RAW_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/downloads/${FOLDER_ENCODED}/${PART_ENCODED}"
                     LINK_NUM=$((LINK_NUM + 1))
                     DOWNLOAD_LINKS_MD="${DOWNLOAD_LINKS_MD}| ${LINK_NUM} | \`${PART_BASENAME}\` | [Download](${RAW_LINK}) |"$'\n'
-                    PART_SIZE=$(stat -c%s "$part_file" 2>/dev/null || echo 0)
-                    TOTAL_ARCHIVE_SIZE=$((TOTAL_ARCHIVE_SIZE + PART_SIZE))
-                  done
-                  ARCHIVE_SIZE_MB=$(echo "scale=2; $TOTAL_ARCHIVE_SIZE / 1024 / 1024" | bc)
+                done
 
-                  {
-                    echo "# ${ARCHIVE_NAME} Archive"
+                ARCHIVE_SIZE_MB=$(echo "scale=2; $TOTAL_ARCHIVE_SIZE / 1024 / 1024" | bc)
+
+                {
+                    echo "# ${ARCHIVE_NAME} Archive (Multi-Part)"
                     echo ""
                     echo "---"
                     echo ""
@@ -319,7 +355,7 @@ jobs:
                     echo ""
                     echo "| Property | Value |"
                     echo "|----------|-------|"
-                    echo "| **Archive Name** | \`${ARCHIVE_NAME}.zip\` |"
+                    echo "| **Archive Name** | \`${ARCHIVE_NAME}\` (Parts) |"
                     echo "| **Total Size** | ${ARCHIVE_SIZE_MB} MB (${LINK_NUM} parts) |"
                     echo "| **Status** | **Complete (100%)** |"
                     if [ -n "$ZIP_PASSWORD" ]; then
@@ -340,8 +376,8 @@ jobs:
                     echo ""
                     echo "## How to Extract"
                     echo ""
-                    echo "1. **Download all parts** (\`.zip\`, \`.z01\`, \`.z02\`...)"
-                    echo "2. **Open** \`${ARCHIVE_NAME}.zip\` with WinRAR, 7-Zip, Ark, or any standard zip tool"
+                    echo "1. **Download all parts** (e.g., \`archive_part1.zip\`, \`archive_part2.zip\`...)"
+                    echo "2. **Open** the first part (\`archive_part1.zip\`) with WinRAR, 7-Zip, Ark, or any standard zip tool"
                     echo "3. **Extract** — all parts combine automatically"
                     if [ -n "$ZIP_PASSWORD" ]; then
                       echo "4. Enter the password when prompted"
@@ -350,11 +386,9 @@ jobs:
                     echo "---"
                     echo ""
                     echo "*This tool created by [avasam.ir](https://avasam.ir)*"
-                  } > "$BACKUP_DIR/$FOLDER_NAME/README.md"
-                fi
-              else
-                echo "No valid files to archive!"
-              fi
+                } > "$BACKUP_DIR/$FOLDER_NAME/README.md"
+            else
+              echo "No valid files to archive!"
             fi
             rm -rf tmp_downloads
           else
@@ -387,52 +421,61 @@ jobs:
               FOLDER_ENCODED=$(urlencode "${FOLDER_NAME}")
 
               if [ "$SIZE" -gt "$SPLIT_THRESHOLD_BYTES" ]; then
-                echo "$BASENAME is $(( SIZE / 1024 / 1024 ))MB - splitting into ${SPLIT_THRESHOLD_MB}MB parts"
+                echo "$BASENAME is $(( SIZE / 1024 / 1024 ))MB - splitting into parts (Threshold: ${SPLIT_THRESHOLD_MB}MB)"
 
-                # Use standard zip split volumes: file.zip, file.z01, file.z02 ...
-                # Compatible with WinRAR, 7-Zip, Ark (Linux), Windows Explorer
-                ARCHIVE_BASE="$BACKUP_DIR/${FOLDER_NAME}/${FOLDER_NAME}"
+                # --- MODIFICATION START: Iterative Archiving for Non-Zip Mode ---
+                TOTAL_RAW_SIZE=$SIZE
+                NUM_PARTS=$(echo "scale=0; ($TOTAL_RAW_SIZE + $SPLIT_THRESHOLD_BYTES - 1) / $SPLIT_THRESHOLD_BYTES" | bc)
+                if [ "$NUM_PARTS" -eq 0 ]; then NUM_PARTS=1; fi
 
-                if [ -n "$ZIP_PASSWORD" ]; then
-                  zip -j -P "${ZIP_PASSWORD}" -s ${SPLIT_THRESHOLD_MB}m \
-                    "${ARCHIVE_BASE}.zip" \
-                    "$FILE"
-                else
-                  zip -j -s ${SPLIT_THRESHOLD_MB}m \
-                    "${ARCHIVE_BASE}.zip" \
-                    "$FILE"
+                MAX_ALLOWED_PARTS=200
+                if [ "$NUM_PARTS" -gt "$MAX_ALLOWED_PARTS" ]; then
+                    echo "Warning: Calculated $NUM_PARTS parts, capping at $MAX_ALLOWED_PARTS for GitHub safety."
+                    NUM_PARTS=$MAX_ALLOWED_PARTS
                 fi
 
-                PARTS_COUNT=$(ls "$BACKUP_DIR/${FOLDER_NAME}/"*.zip "$BACKUP_DIR/${FOLDER_NAME}/"*.z[0-9]* 2>/dev/null | wc -l)
-                echo "Parts created in folder $BACKUP_DIR/$FOLDER_NAME: $PARTS_COUNT files"
+                ACTUAL_SPLIT_THRESHOLD_BYTES=$(echo "scale=0; ($TOTAL_RAW_SIZE + $NUM_PARTS - 1) / $NUM_PARTS" | bc)
 
-                # Verify at least one part was created
-                if [ "$PARTS_COUNT" -eq 0 ]; then
-                  echo "ERROR: No archive parts were created for $BASENAME"
-                  continue
-                fi
 
-                # Calculate total size
-                TOTAL_SIZE=0
-                for part_file in "$BACKUP_DIR/${FOLDER_NAME}"/*; do
-                  if [ -f "$part_file" ]; then
-                    PART_SIZE=$(stat -c%s "$part_file" 2>/dev/null || echo 0)
-                    TOTAL_SIZE=$((TOTAL_SIZE + PART_SIZE))
-                  fi
+                for ((i=1; i<=NUM_PARTS; i++)); do
+                    PART_FILE="${BACKUP_DIR}/${FOLDER_NAME}/part${i}.zip"
+                    echo "Creating archive part $i of $NUM_PARTS: $PART_FILE"
+
+                    if [ -n "$ZIP_PASSWORD" ]; then
+                        zip -j -P "${ZIP_PASSWORD}" -s ${ACTUAL_SPLIT_THRESHOLD_BYTES}b \
+                            "$PART_FILE" \
+                            "$FILE"
+                    else
+                        zip -j -s ${ACTUAL_SPLIT_THRESHOLD_BYTES}b \
+                            "$PART_FILE" \
+                            "$FILE"
+                    fi
+
+                    if [ ! -f "$PART_FILE" ] || [ ! -s "$PART_FILE" ]; then
+                        echo "ERROR: Failed to create archive part $i. Stopping archiving."
+                        rm -rf "$BACKUP_DIR/$FOLDER_NAME"/*
+                        exit 1
+                    fi
                 done
+
+                # --- MODIFICATION END ---
+
+
+                # Calculate total size (using raw size for consistency)
+                TOTAL_SIZE=$TOTAL_RAW_SIZE
                 TOTAL_SIZE_MB=$(echo "scale=2; $TOTAL_SIZE / 1024 / 1024" | bc)
 
                 # Build download links for all parts
                 DOWNLOAD_LINKS_MD=""
                 LINK_NUM=0
-                for part_file in $(ls "$BACKUP_DIR/${FOLDER_NAME}/"*.zip "$BACKUP_DIR/${FOLDER_NAME}/"*.z[0-9]* 2>/dev/null | sort); do
-                  if [ -f "$part_file" ]; then
-                    PART_BASENAME=$(basename "$part_file")
-                    PART_ENCODED=$(urlencode "${PART_BASENAME}")
-                    RAW_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/downloads/${FOLDER_ENCODED}/${PART_ENCODED}"
-                    LINK_NUM=$((LINK_NUM + 1))
-                    DOWNLOAD_LINKS_MD="${DOWNLOAD_LINKS_MD}| ${LINK_NUM} | \`${PART_BASENAME}\` | [Download](${RAW_LINK}) |"$'\n'
-                  fi
+                for part_file in $(ls "$BACKUP_DIR/${FOLDER_NAME}/"*.zip 2>/dev/null | sort); do
+                    if [ -f "$part_file" ]; then
+                        PART_BASENAME=$(basename "$part_file")
+                        PART_ENCODED=$(urlencode "${PART_BASENAME}")
+                        RAW_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/downloads/${FOLDER_ENCODED}/${PART_ENCODED}"
+                        LINK_NUM=$((LINK_NUM + 1))
+                        DOWNLOAD_LINKS_MD="${DOWNLOAD_LINKS_MD}| ${LINK_NUM} | \`${PART_BASENAME}\` | [Download](${RAW_LINK}) |"$'\n'
+                    fi
                 done
 
                 README_FILE="$BACKUP_DIR/${FOLDER_NAME}/README.md"
@@ -446,7 +489,7 @@ jobs:
                   printf '%s\n' "| Property | Value |"
                   printf '%s\n' "|----------|-------|"
                   printf '%s\n' "| **Original File** | \`${BASENAME}\` |"
-                  printf '%s\n' "| **Total Size** | **${PARTS_COUNT} parts** - **${TOTAL_SIZE_MB} MB** |"
+                  printf '%s\n' "| **Total Size** | **${LINK_NUM} parts** - **${TOTAL_SIZE_MB} MB** (Raw) |"
                   printf '%s\n' "| **Status** | **Complete (100%)** |"
                   if [ -n "$ZIP_PASSWORD" ]; then
                     printf '%s\n' "| **Password Protected** | **YES** |"
@@ -466,8 +509,8 @@ jobs:
                   printf '%s\n' ""
                   printf '%s\n' "## How to Extract"
                   printf '%s\n' ""
-                  printf '%s\n' "1. **Download all parts** (\`.zip\`, \`.z01\`, \`.z02\`...)"
-                  printf '%s\n' "2. **Open** \`${FOLDER_NAME}.zip\` with WinRAR, 7-Zip, Ark, or any standard zip tool"
+                  printf '%s\n' "1. **Download all parts** (e.g., \`part1.zip\`, \`part2.zip\`...)"
+                  printf '%s\n' "2. **Open** the first part with WinRAR, 7-Zip, Ark, or any standard zip tool"
                   printf '%s\n' "3. **Extract** — all parts combine automatically"
                   if [ -n "$ZIP_PASSWORD" ]; then
                     printf '%s\n' "4. Enter the password when prompted"
@@ -481,8 +524,6 @@ jobs:
                 echo "Created README.md for split archive"
 
               else
-                echo "$BASENAME - creating zip archive in folder: $BACKUP_DIR/$FOLDER_NAME"
-
                 # Standard zip archive, openable by any zip tool
                 if [ -n "$ZIP_PASSWORD" ]; then
                   zip -j -P "${ZIP_PASSWORD}" \
@@ -516,7 +557,7 @@ jobs:
                   printf '%s\n' "| Property | Value |"
                   printf '%s\n' "|----------|-------|"
                   printf '%s\n' "| **Original File** | \`${BASENAME}\` |"
-                  printf '%s\n' "| **Size** | ${SIZE_MB} MB |"
+                  printf '%s\n' "| **Size** | ${SIZE_MB} MB (Raw) |"
                   printf '%s\n' "| **Status** | **Complete (100%)** |"
                   if [ -n "$ZIP_PASSWORD" ]; then
                     printf '%s\n' "| **Password Protected** | **YES** |"
@@ -588,7 +629,7 @@ jobs:
           {
             echo "# Downloaded list :"
             echo ""
-            echo "$FOLDERS" | while read -r FOLDER; do
+            "$FOLDERS" | while read -r FOLDER; do
               if [ -n "$FOLDER" ]; then
                 FOLDER_ENCODED=$(urlencode "${FOLDER}")
                 echo "- [${FOLDER}](./${FOLDER_ENCODED})"
@@ -612,10 +653,9 @@ jobs:
             echo "" >> README.md
           fi
 
-          if grep -q "$SECTION_TITLE" README.md; then
-            sed -i "/$SECTION_TITLE/,/^---$/d" README.md
-            sed -i '${/^$/d;}' README.md
-          fi
+          # Use sed to remove old section content safely, targeting the title and subsequent lines until '---' or end of file marker.
+          sed -i "/$SECTION_TITLE/,/^---$/d" README.md
+          sed -i '/^$/d' README.md # Clean up empty lines left by deletion
 
           {
             echo ""
@@ -624,7 +664,7 @@ jobs:
             echo "## $SECTION_TITLE"
             echo ""
             COUNTER=1
-            echo "$FOLDERS" | while read -r FOLDER; do
+            "$FOLDERS" | while read -r FOLDER; do
               if [ -n "$FOLDER" ]; then
                 FOLDER_ENCODED=$(urlencode "${FOLDER}")
                 echo "${COUNTER}. [$FOLDER]($REPO_URL/$FOLDER_ENCODED)"
@@ -684,7 +724,7 @@ jobs:
               FOLDER_NAME=$(basename "$folder")
 
               # Skip if it's not a valid folder (check for README.md inside)
-              [ -f "$folder/README.md" ] || continue
+              if [ ! -f "$folder/README.md" ]; then continue; fi
 
               FOLDER_ENCODED=$(urlencode "$FOLDER_NAME")
               printf -- "- [%s](./%s)\n" "$FOLDER_NAME" "$FOLDER_ENCODED" >> "$DOWNLOADS_README"

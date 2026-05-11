@@ -1,5 +1,5 @@
 ---
-name: ⬇️  01- Down load URL (Free Version)
+name: ⬇️  01- Download URL
 
 on:
   workflow_dispatch:

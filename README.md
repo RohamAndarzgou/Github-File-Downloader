@@ -1,14 +1,4 @@
-> [!WARNING]
-> ## ⚠️ DISCLAIMER
-> This project is **no longer maintained** and has been disabled by GitHub for violating their Terms of Service.
-> 
-> - This repository is archived for **educational purposes only**
-> - I am **not responsible** for any misuse of this code
-> - Do **not** use this for anything that violates GitHub's or any platform's Terms of Service
-> - All forks are independent and I have no control over them
-
-
-## ⬇️ دانلود کننده فایل + 🌐 مرورگر وب ( نسخه ۲ )
+## ⬇️ دانلود کننده فایل + 🌐 مرورگر وب
 
 - ✅  دانلود کننده هر فایلی از هرکجا درون گیتهاب شما  
 - ✅  پشتیبانی از فایل های بزرگ چند گیگابایتی

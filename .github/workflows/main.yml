@@ -1,14 +1,9 @@
 ---
-name: ⬇️  01- Down load URL
+name: ⬇️  01- Down load URL (Free Version)
 
 on:
   workflow_dispatch:
     inputs:
-      activation_code:
-        description: '🔑 کد فعالسازی (فقط برای بار اول نیاز است)'
-        required: false
-        default: ''
-        type: string
       urls:
         description: '🔗 لینک های دانلود (با فاصله جدا کنید)'
         required: false
@@ -28,255 +23,19 @@ on:
         type: string
 
 env:
-  CODES_URL: "https://github.com/nikzad-avasam/notifications/raw/refs/heads/main/assets/activate-codes-for-downloader.txt"
+  # Removed CODES_URL as it is no longer needed for activation checks
+  CODES_URL: "" 
 
 jobs:
-  check-activation:
-    runs-on: ubuntu-latest
-    outputs:
-      is_activated: ${{ steps.check.outputs.is_activated }}
-      stored_code: ${{ steps.check.outputs.stored_code }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Check activation status
-        id: check
-        run: |
-          echo "========================================"
-          echo "🔍 بررسی وضعیت فعالسازی..."
-          echo "========================================"
-          if [ -f "activate.txt" ]; then
-            STORED_CODE=$(grep -oP 'code=\K.*' activate.txt | head -1 || echo "")
-            echo "stored_code=$STORED_CODE" >> $GITHUB_OUTPUT
-            if [ -n "$STORED_CODE" ]; then
-              echo "is_activated=true" >> $GITHUB_OUTPUT
-              echo "✅ وضعیت: فعال شده"
-              echo "🎉 دانلودر شما فعال است!"
-            else
-              echo "is_activated=false" >> $GITHUB_OUTPUT
-              echo "🔒 وضعیت: فعال نشده"
-            fi
-          else
-            echo "is_activated=false" >> $GITHUB_OUTPUT
-            echo "stored_code=" >> $GITHUB_OUTPUT
-            echo "🔒 وضعیت: فعال نشده"
-            echo "⚠️ برای استفاده از دانلودر، ابتدا باید آن را فعال کنید"
-          fi
-          echo "========================================"
-
-  activate:
-    needs: check-activation
-    if: needs.check-activation.outputs.is_activated == 'false' && github.event.inputs.activation_code != ''
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Fetch and validate activation code
-        id: validate
-        run: |
-          INPUT_CODE="${{ github.event.inputs.activation_code }}"
-          echo "========================================"
-          echo "🔐 در حال بررسی کد فعالسازی..."
-          echo "========================================"
-          echo ""
-          echo "📥 دریافت لیست کدهای معتبر..."
-          curl -sL "${{ env.CODES_URL }}" | tr -d '\r' | grep -v '^$' > /tmp/valid_codes.txt
-
-          if grep -qx "$INPUT_CODE" /tmp/valid_codes.txt; then
-            echo ""
-            echo "✅ کد فعالسازی معتبر است!"
-            echo "🎊 تبریک! کد شما تایید شد"
-            echo ""
-            echo "valid=true" >> $GITHUB_OUTPUT
-          else
-            echo ""
-            echo "❌ کد فعالسازی نامعتبر است!"
-            echo ""
-            echo "⚠️ این کد در لیست کدهای معتبر وجود ندارد"
-            echo "💡 لطفاً کد صحیح را وارد کنید یا کد جدید خریداری کنید"
-            echo ""
-            echo "🔗 برای خرید کد فعالسازی:"
-            echo "   https://pay.avasam.ir/link/769584"
-            echo ""
-            echo "valid=false" >> $GITHUB_OUTPUT
-          fi
-          echo "========================================"
-
-      - name: Update README with payment info on invalid code
-        if: steps.validate.outputs.valid != 'true'
-        run: |
-          PAYMENT_SECTION="## کد فعالسازی"
-
-          if ! grep -q "$PAYMENT_SECTION" README.md 2>/dev/null; then
-            echo "📝 در حال افزودن راهنمای خرید به README..."
-
-            # Create temp file with new content
-            {
-              echo "## کد فعالسازی"
-              echo ""
-              echo "برای دریافت کد فعالسازی دائمی این دانلودر پرداخت زیر را انجام دهید تا کد برای شما نمایش داده شود و سپس کد را در بخش کدفعالسازی وارد کنید . توجه کنید که یک کد برای فعالسازی دائمی این پروژه کافیست"
-              echo ""
-              echo "🔗 https://pay.avasam.ir/link/769584"
-              echo ""
-              echo "---"
-              echo ""
-            } > /tmp/payment_section.txt
-
-            if [ -f "README.md" ]; then
-              cat README.md >> /tmp/payment_section.txt
-            fi
-
-            mv /tmp/payment_section.txt README.md
-
-            git config --local user.email "github-actions[bot]@users.noreply.github.com"
-            git config --local user.name "github-actions[bot]"
-            git add README.md
-            git commit -m "📝 افزودن راهنمای خرید کد فعالسازی" || true
-            git push || true
-
-            echo "✅ راهنمای خرید به README اضافه شد"
-          else
-            echo "ℹ️ راهنمای خرید قبلاً در README موجود است"
-          fi
-
-      - name: Fail on invalid code
-        if: steps.validate.outputs.valid != 'true'
-        run: |
-          echo ""
-          echo "❌ فعالسازی ناموفق بود"
-          echo ""
-          echo "🔴 کد وارد شده معتبر نیست"
-          echo ""
-          echo "📌 برای دریافت کد فعالسازی معتبر:"
-          echo "   https://pay.avasam.ir/link/769584"
-          echo ""
-          exit 1
-
-      - name: Save activation code
-        if: steps.validate.outputs.valid == 'true'
-        run: |
-          echo "💾 در حال ذخیره کد فعالسازی..."
-          echo "code=${{ github.event.inputs.activation_code }}" > activate.txt
-          echo "activated_at=$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> activate.txt
-          echo "activated_by=${{ github.actor }}" >> activate.txt
-          echo "✅ کد ذخیره شد"
-
-      - name: Commit activation
-        if: steps.validate.outputs.valid == 'true'
-        run: |
-          echo "📤 در حال ثبت فعالسازی..."
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add activate.txt
-          git commit -m "🔑 فعالسازی موفق"
-          git push
-          echo ""
-          echo "========================================"
-          echo "🎉 فعالسازی با موفقیت انجام شد!"
-          echo "========================================"
-          echo ""
-          echo "✅ دانلودر شما اکنون فعال است"
-          echo "📥 برای دانلود فایل، workflow را دوباره اجرا کنید"
-          echo "   و لینک فایل مورد نظر را وارد کنید"
-          echo ""
-          echo "========================================"
-
-  not-activated:
-    needs: check-activation
-    if: needs.check-activation.outputs.is_activated == 'false' && github.event.inputs.activation_code == ''
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Update README with payment info
-        run: |
-          PAYMENT_SECTION="## کد فعالسازی"
-
-          if ! grep -q "$PAYMENT_SECTION" README.md 2>/dev/null; then
-            echo "📝 در حال افزودن راهنمای خرید به README..."
-
-            {
-              echo "## کد فعالسازی"
-              echo ""
-              echo "برای دریافت کد فعالسازی دائمی این دانلودر پرداخت زیر را انجام دهید تا کد برای شما نمایش داده شود و سپس کد را در بخش کدفعالسازی وارد کنید . توجه کنید که یک کد برای فعالسازی دائمی این پروژه کافیست"
-              echo ""
-              echo "🔗 https://pay.avasam.ir/link/769584"
-              echo ""
-              echo "---"
-              echo ""
-            } > /tmp/payment_section.txt
-
-            if [ -f "README.md" ]; then
-              cat README.md >> /tmp/payment_section.txt
-            fi
-
-            mv /tmp/payment_section.txt README.md
-
-            git config --local user.email "github-actions[bot]@users.noreply.github.com"
-            git config --local user.name "github-actions[bot]"
-            git add README.md
-            git commit -m "📝 افزودن راهنمای خرید کد فعالسازی" || true
-            git push || true
-
-            echo "✅ راهنمای خرید به README اضافه شد"
-          else
-            echo "ℹ️ راهنمای خرید قبلاً در README موجود است"
-          fi
-
-      - name: Show activation required
-        run: |
-          echo ""
-          echo "========================================"
-          echo "🔒 فعالسازی مورد نیاز است"
-          echo "========================================"
-          echo ""
-          echo "⚠️ این دانلودر هنوز فعال نشده است"
-          echo ""
-          echo "📌 برای فعالسازی دائمی:"
-          echo "   1️⃣ به لینک زیر بروید و پرداخت کنید:"
-          echo "      https://pay.avasam.ir/link/769584"
-          echo ""
-          echo "   2️⃣ کد فعالسازی را دریافت کنید"
-          echo ""
-          echo "   3️⃣ workflow را دوباره اجرا کنید"
-          echo "      و کد را در فیلد 'کد فعالسازی' وارد کنید"
-          echo ""
-          echo "========================================"
-          exit 1
-
   save-file:
-    needs: check-activation
-    if: needs.check-activation.outputs.is_activated == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
       contents: write
     steps:
-      - name: Fetch and validate stored code
-        run: |
-          echo "🔍 در حال بررسی اعتبار فعالسازی..."
-          curl -sL "${{ env.CODES_URL }}" | tr -d '\r' | grep -v '^$' > /tmp/valid_codes.txt
-          STORED_CODE="${{ needs.check-activation.outputs.stored_code }}"
-          if ! grep -qx "$STORED_CODE" /tmp/valid_codes.txt; then
-            echo ""
-            echo "❌ کد فعالسازی شما باطل شده است!"
-            echo ""
-            echo "⚠️ این کد دیگر معتبر نیست"
-            echo "📌 برای دریافت کد جدید:"
-            echo "   https://pay.avasam.ir/link/769584"
-            echo ""
-            exit 1
-          fi
-          echo "✅ فعالسازی معتبر است"
-
+      # --- Step 1: Check URL Input (Replaces initial checks) ---
       - name: Check URL provided
+        id: check_urls
         run: |
           if [ -z "${{ github.event.inputs.urls }}" ]; then
             echo ""
@@ -291,12 +50,14 @@ jobs:
           fi
           echo "✅ لینک دانلود دریافت شد"
 
+      # --- Step 2: Checkout and Setup (Kept for file access) ---
       - name: Checkout
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
+      # --- Step 3: Configuration & Dependencies (Kept for functionality) ---
       - name: Configure Git for Large Files
         run: |
           git config --global http.postBuffer 524288000
@@ -314,6 +75,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y aria2 zip curl bc
 
+      # --- Step 4: Core Download Logic (Modified to run unconditionally) ---
       - name: AVASAM Downloader - https://avasam.ir
         run: |
           echo "🏷️  AVASAM - Your Download Solution"
@@ -524,15 +286,10 @@ jobs:
 
               if [ ${#VALID_FILES[@]} -gt 0 ]; then
                 ARCHIVE_PATH="$BACKUP_DIR/$FOLDER_NAME/${ARCHIVE_NAME}.zip"
-                if [ -n "$ZIP_PASSWORD" ]; then
-                  zip -j -P "${ZIP_PASSWORD}" -s ${SPLIT_THRESHOLD_MB}m \
+                # Removed password protection logic for free use
+                zip -j -s ${SPLIT_THRESHOLD_MB}m \
                     "${ARCHIVE_PATH}" \
                     "${VALID_FILES[@]}"
-                else
-                  zip -j -s ${SPLIT_THRESHOLD_MB}m \
-                    "${ARCHIVE_PATH}" \
-                    "${VALID_FILES[@]}"
-                fi
 
                 if [ ! -s "${ARCHIVE_PATH}" ] && [ -z "$(ls "$BACKUP_DIR/$FOLDER_NAME/"*.z[0-9]* 2>/dev/null)" ]; then
                   echo "ERROR: Archive file is empty or not created!"
@@ -566,11 +323,6 @@ jobs:
                     echo "| **Archive Name** | \`${ARCHIVE_NAME}.zip\` |"
                     echo "| **Total Size** | ${ARCHIVE_SIZE_MB} MB (${LINK_NUM} parts) |"
                     echo "| **Status** | **Complete (100%)** |"
-                    if [ -n "$ZIP_PASSWORD" ]; then
-                      echo "| **Password Protected** | **YES** |"
-                    else
-                      echo "| **Password Protected** | **NO** |"
-                    fi
                     echo ""
                     echo "---"
                     echo ""
@@ -587,9 +339,6 @@ jobs:
                     echo "1. **Download all parts** (\`.zip\`, \`.z01\`, \`.z02\`...)"
                     echo "2. **Open** \`${ARCHIVE_NAME}.zip\` with WinRAR, 7-Zip, Ark, or any standard zip tool"
                     echo "3. **Extract** — all parts combine automatically"
-                    if [ -n "$ZIP_PASSWORD" ]; then
-                      echo "4. Enter the password when prompted"
-                    fi
                     echo ""
                     echo "---"
                     echo ""
@@ -633,15 +382,10 @@ jobs:
 
                 ARCHIVE_BASE="$BACKUP_DIR/${FOLDER_NAME}/${FOLDER_NAME}"
 
-                if [ -n "$ZIP_PASSWORD" ]; then
-                  zip -j -P "${ZIP_PASSWORD}" -s ${SPLIT_THRESHOLD_MB}m \
+                # Removed password protection logic for free use
+                zip -j -s ${SPLIT_THRESHOLD_MB}m \
                     "${ARCHIVE_BASE}.zip" \
                     "$FILE"
-                else
-                  zip -j -s ${SPLIT_THRESHOLD_MB}m \
-                    "${ARCHIVE_BASE}.zip" \
-                    "$FILE"
-                fi
 
                 PARTS_COUNT=$(ls "$BACKUP_DIR/${FOLDER_NAME}/"*.zip "$BACKUP_DIR/${FOLDER_NAME}/"*.z[0-9]* 2>/dev/null | wc -l)
                 echo "Parts created in folder $BACKUP_DIR/$FOLDER_NAME: $PARTS_COUNT files"
@@ -685,34 +429,26 @@ jobs:
                   printf '%s\n' "| **Original File** | \`${BASENAME}\` |"
                   printf '%s\n' "| **Total Size** | **${PARTS_COUNT} parts** - **${TOTAL_SIZE_MB} MB** |"
                   printf '%s\n' "| **Status** | **Complete (100%)** |"
-                  if [ -n "$ZIP_PASSWORD" ]; then
-                    printf '%s\n' "| **Password Protected** | **YES** |"
-                  else
-                    printf '%s\n' "| **Password Protected** | **NO** |"
-                  fi
-                  printf '%s\n' ""
-                  printf '%s\n' "---"
-                  printf '%s\n' ""
-                  printf '%s\n' "## Download Links"
-                  printf '%s\n' ""
-                  printf '%s\n' "| # | File | Link |"
-                  printf '%s\n' "|---|------|------|"
+                  echo ""
+                  echo "---"
+                  echo ""
+                  echo "## Download Links"
+                  echo ""
+                  echo "| # | File | Link |"
+                  echo "|---|------|------|"
                   printf '%s' "${DOWNLOAD_LINKS_MD}"
-                  printf '%s\n' ""
-                  printf '%s\n' "---"
-                  printf '%s\n' ""
-                  printf '%s\n' "## How to Extract"
-                  printf '%s\n' ""
-                  printf '%s\n' "1. **Download all parts** (\`.zip\`, \`.z01\`, \`.z02\`...)"
-                  printf '%s\n' "2. **Open** \`${FOLDER_NAME}.zip\` with WinRAR, 7-Zip, Ark, or any standard zip tool"
-                  printf '%s\n' "3. **Extract** — all parts combine automatically"
-                  if [ -n "$ZIP_PASSWORD" ]; then
-                    printf '%s\n' "4. Enter the password when prompted"
-                  fi
-                  printf '%s\n' ""
-                  printf '%s\n' "---"
-                  printf '%s\n' ""
-                  printf '%s\n' "*This tool created by [avasam.ir](https://avasam.ir)*"
+                  echo ""
+                  echo "---"
+                  echo ""
+                  echo "## How to Extract"
+                  echo ""
+                  echo "1. **Download all parts** (\`.zip\`, \`.z01\`, \`.z02\`...)"
+                  echo "2. **Open** \`${FOLDER_NAME}.zip\` with WinRAR, 7-Zip, Ark, or any standard zip tool"
+                  echo "3. **Extract** — all parts combine automatically"
+                  echo ""
+                  echo "---"
+                  echo ""
+                  echo "*This tool created by [avasam.ir](https://avasam.ir)*"
                 } > "$README_FILE"
 
                 echo "Created README.md for split archive"
@@ -720,15 +456,10 @@ jobs:
               else
                 echo "$BASENAME - creating zip archive in folder: $BACKUP_DIR/$FOLDER_NAME"
 
-                if [ -n "$ZIP_PASSWORD" ]; then
-                  zip -j -P "${ZIP_PASSWORD}" \
+                # Removed password protection logic for free use
+                zip -j \
                     "$BACKUP_DIR/${FOLDER_NAME}/${FOLDER_NAME}.zip" \
                     "$FILE"
-                else
-                  zip -j \
-                    "$BACKUP_DIR/${FOLDER_NAME}/${FOLDER_NAME}.zip" \
-                    "$FILE"
-                fi
 
                 if [ ! -s "$BACKUP_DIR/${FOLDER_NAME}/${FOLDER_NAME}.zip" ]; then
                   echo "ERROR: Failed to create archive for $BASENAME"
@@ -753,33 +484,25 @@ jobs:
                   printf '%s\n' "| **Original File** | \`${BASENAME}\` |"
                   printf '%s\n' "| **Size** | ${SIZE_MB} MB |"
                   printf '%s\n' "| **Status** | **Complete (100%)** |"
-                  if [ -n "$ZIP_PASSWORD" ]; then
-                    printf '%s\n' "| **Password Protected** | **YES** |"
-                  else
-                    printf '%s\n' "| **Password Protected** | **NO** |"
-                  fi
-                  printf '%s\n' ""
-                  printf '%s\n' "---"
-                  printf '%s\n' ""
-                  printf '%s\n' "## Download Link"
-                  printf '%s\n' ""
-                  printf '%s\n' "| File | Link |"
-                  printf '%s\n' "|------|------|"
+                  echo ""
+                  echo "---"
+                  echo ""
+                  echo "## Download Link"
+                  echo ""
+                  echo "| File | Link |"
+                  echo "|------|------|"
                   printf '%s\n' "| \`${FOLDER_NAME}.zip\` | [Download](${RAW_LINK}) |"
-                  printf '%s\n' ""
-                  printf '%s\n' "---"
-                  printf '%s\n' ""
-                  printf '%s\n' "## How to Extract"
-                  printf '%s\n' ""
-                  printf '%s\n' "1. **Open** \`${FOLDER_NAME}.zip\` with WinRAR, 7-Zip, Ark, or any standard zip tool"
-                  printf '%s\n' "2. **Extract** the file"
-                  if [ -n "$ZIP_PASSWORD" ]; then
-                    printf '%s\n' "3. Enter the password when prompted"
-                  fi
-                  printf '%s\n' ""
-                  printf '%s\n' "---"
-                  printf '%s\n' ""
-                  printf '%s\n' "*This tool created by [avasam.ir](https://avasam.ir)*"
+                  echo ""
+                  echo "---"
+                  echo ""
+                  echo "## How to Extract"
+                  echo ""
+                  echo "1. **Open** \`${FOLDER_NAME}.zip\` with WinRAR, 7-Zip, Ark, or any standard zip tool"
+                  echo "2. **Extract** the file"
+                  echo ""
+                  echo "---"
+                  echo ""
+                  echo "*This tool created by [avasam.ir](https://avasam.ir)*"
                 } > "$README_FILE"
 
                 echo "Created zip archive and README.md"
@@ -842,10 +565,9 @@ jobs:
             echo "" >> README.md
           fi
 
-          if grep -q "$SECTION_TITLE" README.md; then
-            sed -i "/$SECTION_TITLE/,/^---$/d" README.md
-            sed -i '${/^$/d;}' README.md
-          fi
+          # Use sed to remove the old section cleanly, regardless of content
+          sed -i "/$SECTION_TITLE/,/---$/d" README.md 2>/dev/null || true
+          sed -i '/^$/d' README.md # Remove empty lines left by deletion
 
           {
             echo ""
@@ -907,9 +629,10 @@ jobs:
             for folder in downloads/*/; do
               [ -d "$folder" ] || continue
               FOLDER_NAME=$(basename "$folder")
-              [ -f "$folder/README.md" ] || continue
-              FOLDER_ENCODED=$(urlencode "$FOLDER_NAME")
-              printf -- "- [%s](./%s)\n" "$FOLDER_NAME" "$FOLDER_ENCODED" >> "$DOWNLOADS_README"
+              if [ -f "$folder/README.md" ]; then
+                FOLDER_ENCODED=$(urlencode "$FOLDER_NAME")
+                printf -- "- [%s](./%s)\n" "$FOLDER_NAME" "$FOLDER_ENCODED" >> "$DOWNLOADS_README"
+              fi
             done
 
             {
@@ -1057,7 +780,7 @@ jobs:
 
           if [ $TOTAL_FILES -eq 0 ]; then
             git add README.md 2>/dev/null || true
-            if ! git diff --cached --quiet 2>/dev/null; then
+            if ! git diff --cached --quiet; then
               git commit -m "[AVASAM] Update README [skip ci]"
               timeout 120 git push origin HEAD:"$BRANCH" || true
             fi

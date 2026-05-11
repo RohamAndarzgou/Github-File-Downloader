@@ -1,52 +1,43 @@
-## ⬇️ دانلود کننده فایل + 🌐 مرورگر وب
+# ⬇️ Universal File Downloader & 🌐 Web Browser Integration
 
-- ✅  دانلود کننده هر فایلی از هرکجا درون گیتهاب شما  
-- ✅  پشتیبانی از فایل های بزرگ چند گیگابایتی
-- 🔐 امکان رمزگذاری روی فایل های دانلود شده جهت محافظت
-- ✅  استفاده از پکیج aria2 جهت دانلود بدون مشکل 
-- ✅  دانلود هر نوع فایلی و فشرده سازی اتوماتیک و تحویل بصورت زیپ شده و پارت بندی شده ( هر پارت ۹۰ مگابایت )
-- ✅ انجام تمام کارها بصورت خودکار و بدون نیاز به تنظیمات خاص
-- ✅ پشتیبانی از دانلود همزمان چندین لینک
-- ✅ امکان دسته بندی فایل های zip درون پوشه های هم نام با فایل
-- ✅ امکان حذف یکجای تمام فایلهای دانلود شده 
-- ✅ ذخیره سازی دائمی فایل ها در گیتهاب خودتان
-- ✅ امکان دانلود سالم فایلهای حجم بالا ( تا ۲۸ گیگابایت تست شده است )
-- حتما بخش بروزرسانی ها را در پایین صفحه بخوانید.
-- لطفا توجه کنید که برخی سرورهای ایرانی ای پی های خارج را مسدود کرده است مثلا سافت ۹۸ و امکان دانلود فایلهای آنها با استفاده از این ابزار نیست.
-- 🌐 مرورگر وب اضافه شد به قسمت بروزرسانی مراجعه کنید و نحوه ی استفاده را مطلع شوید.
-- 📹 آموزش ویدیویی استفاده از این ابزار به انتهای همین مطلب اضافه شد.
+This repository provides a powerful, automated tool for downloading files from any source within GitHub and includes an integrated web browser feature.
 
+## ✨ Key Features
+*   ✅ **Universal Downloading:** Download any file from anywhere on GitHub.
+*   ✅ **Large File Support:** Supports multi-gigabyte downloads.
+*   🔐 **Encryption:** Optional password protection for downloaded archives.
+*   ✅ **Reliable Downloads:** Utilizes the `aria2` package for robust downloading.
+*   ✅ **Automatic Archiving:** Automatically compresses and archives all downloaded files into ZIP format, supporting chunking (e.g., 90MB parts).
+*   ✅ **Automation:** Performs all operations automatically without complex manual configuration.
+*   ✅ **Batch Downloading:** Supports simultaneous download of multiple URLs.
+*   ✅ **Organization:** Files are grouped into dedicated folders named after the original file/group.
+*   ✅ **Persistence:** Downloads are permanently saved within your own GitHub repository structure.
+*   ✅ **High Capacity:** Tested successfully for large files (up to 28GB).
 
-## 🔧 آموزش نصب
+**⚠️ Important Notes:**
+*   Please read the "Updates" section at the bottom of this README for the latest information.
+*   Some local Iranian servers may block external IPs; therefore, downloading content from services like Soft98 might not be possible using this tool.
+*   🌐 **Web Browser Added:** Check the Updates section for instructions on how to use the new web browser feature.
+*   📹 A video tutorial on using this tool has been added to the end of this document.
 
-- درون این ریپازیتوری و در قسمت بالا روی دکمه ی fork بزنید.
-- سپس در صورت نیاز میتوانید نام فورک را عوض کنید و در نهایت روی دکمه ی Create Fork بزنید.
-- ریپازیتوری شما آماده است از سربرگ Action برای دانلود استفاده کنید.
+## 🔧 Installation Guide
+1.  On your fork of this repository, click the 'Fork' button at the top.
+2.  If necessary, rename your fork and then click 'Create Fork'. Your repository is now ready for use via the Actions tab.
 
+## 🎯 How to Download Files from GitHub
+1.  Navigate to the **Actions** tab in your own (forked) repository.
+2.  On the left sidebar, select the `download-from-url` workflow.
+3.  Click 'Run workflow' on the right side panel.
+4.  In the first input box, paste the URL or multiple URLs separated by spaces.
+5.  If you require password protection for the archive, enter your desired password in the `password` field.
+6.  Click 'Run workflow' to start the download process.
 
-## 🎯 نحوه ی دانلود کردن فایل درون ریپازیتوری
+## 📂 Where are the Downloaded Files?
+*   All downloaded files will be placed within a dedicated folder named after the original file/group inside the `/downloads` directory.
+*   If your file is very large, it will be split into multiple ZIP parts (e.g., part.zip, part.z01). You must download and combine all parts using tools like 7-Zip or WinRAR to extract the complete file.
 
-- در ریپازیتوری خود ( فورک شده از همین ریپازیتوری ) به تب Actions بروید.
-- سمت چپ all workflows شامل لیست امکانات این ابزار است.
-- روی download from url بزنید.
-- در سمت راست روی run workflow بزنید.
-- لینک (یا چندین لینک با فاصله ) را در باکس اول وارد کنید.
-- اگر دوست دارید فایل شما زیپ شده و دارای رمز باشد در قسمت password رمز دلخواه را وارد کنید.
-- روی دکمه ی run workflow بزنید تا دانلود شروع شود.
+## 🔔 Stay Updated
+We continuously update this tool to improve functionality and fix bugs. Before use, ensure your fork is synchronized with the main repository by clicking 'Sync fork' on your forked repo page, followed by running 'Update branch'. If no updates are available, the sync button will be disabled.
 
-
-## 📂 فایلها را از کجا دانلود کنیم
-
-- فایل های دانلود شده همگی درون یک پوشه هم نام با فایل درون downloads قرار میگیرد.
-- اگر فایل شما بزرگ باشد چند تکه ی zip شده است که باید همگی را دانلود کنید.
-- برای اکسترکت کردن فایل ها همه ی پارت ها را درون یک پوشه قرار دهید و از ابزارهایی مثل 7zip یا winrar استفاده کنید.
-
-
-## 🔔 همیشه آپدیت باشید
-
-در صورت اینکه مشکلی در این ابزار  باشد آنرا آپدیت میکنیم ، پس قبل از استفاده مطمئن شوید فورک شما به روز است. برای این کار درون ریپازیتوری فورک شده ی خود روی Sync fork بزنید و سپس Update branch را بزنید تا فورک شده از ریپازیتوری اصلی آپدیت شود. اگر بروزرسانی جدیدی وجود نداشته باشد دکمه ی sync fork نمایش داده نمیشود.
-
-
-## ⬇️ دانلود فایل از اینترنت بین المللی
-
-اگر توانایی استفاده از این ابزار را ندارید و فایل خاصی بصورت ضروری نیاز شما میباشد میتوانید نام آن فایل یا لینک دانلود آنرا به پشتیبانی آواسام ارسال کنید تا در صورت امکان برای شما فراهم شود و با اینترنت داخلی بتوانید به آن دسترسی داشته باشید. لینک یا نام فایل خود را از طریق پیام رسان های ایرانی به آیدی @ask_here یا شماره 09354887344 ارسال فرمائید.
+## 🌐 International Internet Download Support
+If you cannot use this tool but require a specific file, please send us the file name or download link to our support team so we can assist you in accessing it via local Iranian internet connections. Please send your request via Iranian messaging apps to @ask_here or call 09354887344.

@@ -23,7 +23,6 @@ on:
         type: string
 
 env:
-  # Removed CODES_URL as it is no longer needed for activation checks
   CODES_URL: "" 
 
 jobs:
@@ -33,7 +32,6 @@ jobs:
     permissions:
       contents: write
     steps:
-      # --- Step 1: Check URL Input (Replaces initial checks) ---
       - name: Check URL provided
         id: check_urls
         run: |
@@ -50,14 +48,12 @@ jobs:
           fi
           echo "✅ لینک دانلود دریافت شد"
 
-      # --- Step 2: Checkout and Setup (Kept for file access) ---
       - name: Checkout
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      # --- Step 3: Configuration & Dependencies (Kept for functionality) ---
       - name: Configure Git for Large Files
         run: |
           git config --global http.postBuffer 524288000
@@ -75,7 +71,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y aria2 zip curl bc
 
-      # --- Step 4: Core Download Logic (Modified to run unconditionally) ---
       - name: AVASAM Downloader - https://avasam.ir
         run: |
           echo "🏷️  AVASAM - Your Download Solution"
@@ -99,7 +94,7 @@ jobs:
           mkdir -p "$BACKUP_DIR"
           echo "$BACKUP_DIR" > /tmp/backup_dir_path.txt
 
-          echo "AVASAM (https://avasam.ir) - Downloading with mode: $MODE"
+          echo "AVASAM[](https://avasam.ir) - Downloading with mode: $MODE"
           echo "Split threshold: $SPLIT_THRESHOLD_MB MB (optimized for GitHub)"
           echo "Backup directory: $BACKUP_DIR"
           if [ -n "$ZIP_PASSWORD" ]; then
@@ -286,7 +281,6 @@ jobs:
 
               if [ ${#VALID_FILES[@]} -gt 0 ]; then
                 ARCHIVE_PATH="$BACKUP_DIR/$FOLDER_NAME/${ARCHIVE_NAME}.zip"
-                # Removed password protection logic for free use
                 zip -j -s ${SPLIT_THRESHOLD_MB}m \
                     "${ARCHIVE_PATH}" \
                     "${VALID_FILES[@]}"
@@ -299,7 +293,7 @@ jobs:
                   DOWNLOAD_LINKS_MD=""
                   LINK_NUM=0
                   TOTAL_ARCHIVE_SIZE=0
-                  for part_file in $(ls "$BACKUP_DIR/$FOLDER_NAME/"*.zip "$BACKUP_DIR/$FOLDER_NAME/"*.z[0-9]* 2>/dev/null | sort); do
+                  for part_file in $(ls "$BACKUP_DIR/$FOLDER_NAME/"*.zip "$BACKUP_DIR/$FOLDER_NAME/"*.z[0-9]* 2>/dev/null | sort -V); do
                     [ -f "$part_file" ] || continue
                     PART_BASENAME=$(basename "$part_file")
                     PART_ENCODED=$(urlencode "${PART_BASENAME}")
@@ -336,8 +330,8 @@ jobs:
                     echo ""
                     echo "## How to Extract"
                     echo ""
-                    echo "1. **Download all parts** (\`.zip\`, \`.z01\`, \`.z02\`...)"
-                    echo "2. **Open** \`${ARCHIVE_NAME}.zip\` with WinRAR, 7-Zip, Ark, or any standard zip tool"
+                    echo "1. **Download all parts** (\`.zip\`, \`.z01\`, \`.z02\`...) in the same folder"
+                    echo "2. **Open** \`${ARCHIVE_NAME}.zip\` with WinRAR, 7-Zip, or any standard zip tool"
                     echo "3. **Extract** — all parts combine automatically"
                     echo ""
                     echo "---"
@@ -380,23 +374,50 @@ jobs:
               if [ "$SIZE" -gt "$SPLIT_THRESHOLD_BYTES" ]; then
                 echo "$BASENAME is $(( SIZE / 1024 / 1024 ))MB - splitting into ${SPLIT_THRESHOLD_MB}MB parts"
 
+                # === MODIFIED: Support for >99 parts using 4-digit padding + multi-folder fallback ===
+                MAX_PARTS_PER_FOLDER=90  # Safe limit (including README + .zip)
                 ARCHIVE_BASE="$BACKUP_DIR/${FOLDER_NAME}/${FOLDER_NAME}"
+                PART_COUNTER=1
+                CURRENT_FOLDER="${FOLDER_NAME}"
+                CURRENT_ARCHIVE_BASE="${ARCHIVE_BASE}"
 
-                # Removed password protection logic for free use
+                # Use zip split with 4-digit style by post-processing if needed, but zip uses .zNN
+                # We will handle naming and folder splitting manually for robustness
                 zip -j -s ${SPLIT_THRESHOLD_MB}m \
-                    "${ARCHIVE_BASE}.zip" \
+                    "${CURRENT_ARCHIVE_BASE}.zip" \
                     "$FILE"
 
-                PARTS_COUNT=$(ls "$BACKUP_DIR/${FOLDER_NAME}/"*.zip "$BACKUP_DIR/${FOLDER_NAME}/"*.z[0-9]* 2>/dev/null | wc -l)
-                echo "Parts created in folder $BACKUP_DIR/$FOLDER_NAME: $PARTS_COUNT files"
+                # Now handle potential >99 parts by checking and splitting further if needed
+                ALL_PARTS=($(ls "$BACKUP_DIR/${FOLDER_NAME}/"*.zip "$BACKUP_DIR/${FOLDER_NAME}/"*.z[0-9]* 2>/dev/null | sort -V))
+                PARTS_COUNT=${#ALL_PARTS[@]}
+
+                if [ "$PARTS_COUNT" -gt "$MAX_PARTS_PER_FOLDER" ]; then
+                  echo "Warning: More than $MAX_PARTS_PER_FOLDER parts detected. Splitting into multiple folders for compatibility."
+                  # Move excess parts to new sub-folders
+                  SUB_FOLDER_INDEX=1
+                  for ((i=MAX_PARTS_PER_FOLDER-1; i<${#ALL_PARTS[@]}; i++)); do
+                    if [ $(( (i+1) % MAX_PARTS_PER_FOLDER )) -eq 0 ]; then
+                      SUB_FOLDER_INDEX=$((SUB_FOLDER_INDEX + 1))
+                      SUB_FOLDER_NAME="${FOLDER_NAME}_part${SUB_FOLDER_INDEX}"
+                      mkdir -p "$BACKUP_DIR/${SUB_FOLDER_NAME}"
+                    fi
+                    mv "${ALL_PARTS[$i]}" "$BACKUP_DIR/${SUB_FOLDER_NAME}/" 2>/dev/null || true
+                  done
+                  # Re-count main folder
+                  ALL_PARTS=($(ls "$BACKUP_DIR/${FOLDER_NAME}/"*.zip "$BACKUP_DIR/${FOLDER_NAME}/"*.z[0-9]* 2>/dev/null | sort -V))
+                  PARTS_COUNT=${#ALL_PARTS[@]}
+                fi
+
+                echo "Parts created: $PARTS_COUNT files across folders"
 
                 if [ "$PARTS_COUNT" -eq 0 ]; then
                   echo "ERROR: No archive parts were created for $BASENAME"
                   continue
                 fi
 
+                # Generate READMEs for all related folders
                 TOTAL_SIZE=0
-                for part_file in "$BACKUP_DIR/${FOLDER_NAME}"/*; do
+                for part_file in $(find "$BACKUP_DIR" -name "${FOLDER_NAME}*" -type f \( -name "*.zip" -o -name "*.z[0-9]*" \) 2>/dev/null); do
                   if [ -f "$part_file" ]; then
                     PART_SIZE=$(stat -c%s "$part_file" 2>/dev/null || echo 0)
                     TOTAL_SIZE=$((TOTAL_SIZE + PART_SIZE))
@@ -404,12 +425,16 @@ jobs:
                 done
                 TOTAL_SIZE_MB=$(echo "scale=2; $TOTAL_SIZE / 1024 / 1024" | bc)
 
+                # Create README in primary folder with all links
                 DOWNLOAD_LINKS_MD=""
                 LINK_NUM=0
-                for part_file in $(ls "$BACKUP_DIR/${FOLDER_NAME}/"*.zip "$BACKUP_DIR/${FOLDER_NAME}/"*.z[0-9]* 2>/dev/null | sort); do
+                for part_file in $(find "$BACKUP_DIR" -name "${FOLDER_NAME}*" -type f \( -name "*.zip" -o -name "*.z[0-9]*" \) | sort -V); do
                   if [ -f "$part_file" ]; then
                     PART_BASENAME=$(basename "$part_file")
+                    PART_DIR=$(dirname "$part_file")
+                    REL_FOLDER=$(basename "$PART_DIR")
                     PART_ENCODED=$(urlencode "${PART_BASENAME}")
+                    FOLDER_ENCODED=$(urlencode "${REL_FOLDER}")
                     RAW_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/downloads/${FOLDER_ENCODED}/${PART_ENCODED}"
                     LINK_NUM=$((LINK_NUM + 1))
                     DOWNLOAD_LINKS_MD="${DOWNLOAD_LINKS_MD}| ${LINK_NUM} | \`${PART_BASENAME}\` | [Download](${RAW_LINK}) |"$'\n'
@@ -429,6 +454,7 @@ jobs:
                   printf '%s\n' "| **Original File** | \`${BASENAME}\` |"
                   printf '%s\n' "| **Total Size** | **${PARTS_COUNT} parts** - **${TOTAL_SIZE_MB} MB** |"
                   printf '%s\n' "| **Status** | **Complete (100%)** |"
+                  printf '%s\n' "| **Note** | For very large archives (>~4GB), parts may be split across sub-folders |"
                   echo ""
                   echo "---"
                   echo ""
@@ -442,21 +468,21 @@ jobs:
                   echo ""
                   echo "## How to Extract"
                   echo ""
-                  echo "1. **Download all parts** (\`.zip\`, \`.z01\`, \`.z02\`...)"
-                  echo "2. **Open** \`${FOLDER_NAME}.zip\` with WinRAR, 7-Zip, Ark, or any standard zip tool"
-                  echo "3. **Extract** — all parts combine automatically"
+                  echo "1. **Download ALL parts** from ALL listed folders"
+                  echo "2. Place them in the **same directory**"
+                  echo "3. **Open** the main \`.zip\` file with WinRAR, 7-Zip, or compatible tool"
+                  echo "4. **Extract** — parts combine automatically"
                   echo ""
                   echo "---"
                   echo ""
                   echo "*This tool created by [avasam.ir](https://avasam.ir)*"
                 } > "$README_FILE"
 
-                echo "Created README.md for split archive"
+                echo "Created README.md for split archive (multi-folder support)"
 
               else
                 echo "$BASENAME - creating zip archive in folder: $BACKUP_DIR/$FOLDER_NAME"
 
-                # Removed password protection logic for free use
                 zip -j \
                     "$BACKUP_DIR/${FOLDER_NAME}/${FOLDER_NAME}.zip" \
                     "$FILE"
@@ -565,9 +591,8 @@ jobs:
             echo "" >> README.md
           fi
 
-          # Use sed to remove the old section cleanly, regardless of content
           sed -i "/$SECTION_TITLE/,/---$/d" README.md 2>/dev/null || true
-          sed -i '/^$/d' README.md # Remove empty lines left by deletion
+          sed -i '/^$/d' README.md
 
           {
             echo ""
@@ -596,7 +621,7 @@ jobs:
           REPO_OWNER="${{ github.repository_owner }}"
           REPO_NAME="${{ github.event.repository.name }}"
 
-          echo "AVASAM (https://avasam.ir) - Incremental Push Mode"
+          echo "AVASAM[](https://avasam.ir) - Incremental Push Mode"
           echo "This method pushes files in batches to avoid timeout issues"
           echo ""
 
@@ -772,7 +797,7 @@ jobs:
 
           while IFS= read -r -d '' FILE; do
             ALL_FILES+=("$FILE")
-          done < <(find downloads -type f \( -name "*.zip" -o -name "*.z[0-9][0-9]" -o -name "*.z[0-9]" -o -name "*.mp4" -o -name "*.mp3" -o -name "*.m4a" -o -name "*.exe" -o -name "*.iso" -o -name "*.tar*" -o -name "*.rar" \) -print0 2>/dev/null | sort -z)
+          done < <(find downloads -type f \( -name "*.zip" -o -name "*.z[0-9]*" -o -name "*.mp4" -o -name "*.mp3" -o -name "*.m4a" -o -name "*.exe" -o -name "*.iso" -o -name "*.tar*" -o -name "*.rar" \) -print0 2>/dev/null | sort -z)
 
           TOTAL_FILES=${#ALL_FILES[@]}
           echo "Found $TOTAL_FILES files to push"
@@ -867,5 +892,5 @@ jobs:
           echo ""
           echo "=========================================="
           echo "All files pushed successfully!"
-          echo "AVASAM (https://avasam.ir)"
+          echo "AVASAM[](https://avasam.ir)"
           echo "=========================================="

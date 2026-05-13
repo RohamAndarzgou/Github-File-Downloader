@@ -1,5 +1,5 @@
 ---
-name: ⬇️ 01 - Download URL
+name: ⬇️  01- Download URL
 
 on:
   workflow_dispatch:
@@ -418,16 +418,19 @@ jobs:
                   rm -f "$BACKUP_DIR/$FOLDER_NAME/$ARCHIVE_NAME".7z.*
                 else
                   FOLDER_ENCODED=$(urlencode "${FOLDER_NAME}")
+                  RAW_BASE="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/downloads"
                   DOWNLOAD_LINKS_MD=""
+                  ALL_LINKS=""
                   LINK_NUM=0
                   TOTAL_ARCHIVE_SIZE=0
                   for part_file in $(ls "$BACKUP_DIR/$FOLDER_NAME/"*.7z.* 2>/dev/null | sort); do
                     [ -f "$part_file" ] || continue
                     PART_BASENAME=$(basename "$part_file")
                     PART_ENCODED=$(urlencode "${PART_BASENAME}")
-                    RAW_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/downloads/${FOLDER_ENCODED}/${PART_ENCODED}"
+                    RAW_LINK="${RAW_BASE}/${FOLDER_ENCODED}/${PART_ENCODED}"
                     LINK_NUM=$((LINK_NUM + 1))
                     DOWNLOAD_LINKS_MD="${DOWNLOAD_LINKS_MD}| ${LINK_NUM} | \`${PART_BASENAME}\` | [Download](${RAW_LINK}) |"$'\n'
+                    ALL_LINKS="${ALL_LINKS}${RAW_LINK}"$'\n'
                     PART_SIZE=$(stat -c%s "$part_file" 2>/dev/null || echo 0)
                     TOTAL_ARCHIVE_SIZE=$((TOTAL_ARCHIVE_SIZE + PART_SIZE))
                   done
@@ -457,6 +460,14 @@ jobs:
                     echo "| # | File | Link |"
                     echo "|---|------|------|"
                     printf '%s' "${DOWNLOAD_LINKS_MD}"
+                    echo ""
+                    echo "---"
+                    echo ""
+                    echo "## All Links (for Download Managers)"
+                    echo ""
+                    echo '```'
+                    printf '%s' "${ALL_LINKS}"
+                    echo '```'
                     echo ""
                     echo "---"
                     echo ""
@@ -525,26 +536,24 @@ jobs:
                   continue
                 fi
 
+                RAW_BASE="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/downloads"
                 TOTAL_SIZE=0
-                for part_file in "$BACKUP_DIR/${FOLDER_NAME}"/*.7z.*; do
-                  if [ -f "$part_file" ]; then
-                    PART_SIZE_BYTES=$(stat -c%s "$part_file" 2>/dev/null || echo 0)
-                    TOTAL_SIZE=$((TOTAL_SIZE + PART_SIZE_BYTES))
-                  fi
-                done
-                TOTAL_SIZE_MB=$(echo "scale=2; $TOTAL_SIZE / 1024 / 1024" | bc)
-
                 DOWNLOAD_LINKS_MD=""
+                ALL_LINKS=""
                 LINK_NUM=0
                 for part_file in $(ls "$BACKUP_DIR/${FOLDER_NAME}/"*.7z.* 2>/dev/null | sort); do
                   if [ -f "$part_file" ]; then
                     PART_BASENAME=$(basename "$part_file")
                     PART_ENCODED=$(urlencode "${PART_BASENAME}")
-                    RAW_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/downloads/${FOLDER_ENCODED}/${PART_ENCODED}"
+                    RAW_LINK="${RAW_BASE}/${FOLDER_ENCODED}/${PART_ENCODED}"
                     LINK_NUM=$((LINK_NUM + 1))
                     DOWNLOAD_LINKS_MD="${DOWNLOAD_LINKS_MD}| ${LINK_NUM} | \`${PART_BASENAME}\` | [Download](${RAW_LINK}) |"$'\n'
+                    ALL_LINKS="${ALL_LINKS}${RAW_LINK}"$'\n'
+                    PART_SIZE_BYTES=$(stat -c%s "$part_file" 2>/dev/null || echo 0)
+                    TOTAL_SIZE=$((TOTAL_SIZE + PART_SIZE_BYTES))
                   fi
                 done
+                TOTAL_SIZE_MB=$(echo "scale=2; $TOTAL_SIZE / 1024 / 1024" | bc)
 
                 README_FILE="$BACKUP_DIR/${FOLDER_NAME}/README.md"
                 {
@@ -571,6 +580,14 @@ jobs:
                   echo "| # | File | Link |"
                   echo "|---|------|------|"
                   printf '%s' "${DOWNLOAD_LINKS_MD}"
+                  echo ""
+                  echo "---"
+                  echo ""
+                  echo "## All Links (for Download Managers)"
+                  echo ""
+                  echo '```'
+                  printf '%s' "${ALL_LINKS}"
+                  echo '```'
                   echo ""
                   echo "---"
                   echo ""
@@ -604,9 +621,10 @@ jobs:
                   continue
                 fi
 
+                RAW_BASE="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/downloads"
                 SIZE_MB=$(echo "scale=2; $SIZE / 1024 / 1024" | bc)
                 FILE_ENCODED=$(urlencode "${FOLDER_NAME}.7z")
-                RAW_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/downloads/${FOLDER_ENCODED}/${FILE_ENCODED}"
+                RAW_LINK="${RAW_BASE}/${FOLDER_ENCODED}/${FILE_ENCODED}"
 
                 README_FILE="$BACKUP_DIR/${FOLDER_NAME}/README.md"
                 {
@@ -633,6 +651,14 @@ jobs:
                   echo "| File | Link |"
                   echo "|------|------|"
                   printf '%s\n' "| \`${FOLDER_NAME}.7z\` | [Download](${RAW_LINK}) |"
+                  echo ""
+                  echo "---"
+                  echo ""
+                  echo "## All Links (for Download Managers)"
+                  echo ""
+                  echo '```'
+                  printf '%s\n' "${RAW_LINK}"
+                  echo '```'
                   echo ""
                   echo "---"
                   echo ""

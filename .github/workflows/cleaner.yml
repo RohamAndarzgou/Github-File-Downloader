@@ -13,7 +13,7 @@ on:
 jobs:
   delete:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 120               # <-- generous timeout for huge repos
     permissions:
       contents: write
 
@@ -37,11 +37,42 @@ jobs:
           echo "AVASAM (https://avasam.ir) - Cleaning downloads"
           echo ""
 
+          # Helper: recursively remove a directory in batches of 100 files
+          batch_delete() {
+            local folder="$1"
+            if [ ! -d "$folder" ]; then
+              return
+            fi
+            echo "Batch-deleting files inside $folder ..."
+            # Collect all files, remove in chunks
+            find "$folder" -type f -print0 > /tmp/files_to_delete.txt
+            if [ ! -s /tmp/files_to_delete.txt ]; then
+              rmdir "$folder" 2>/dev/null || true
+              return
+            fi
+            while IFS= read -r -d '' file; do
+              git rm -f "$file" 2>/dev/null || rm -f "$file"
+            done < <(head -z -n 100 /tmp/files_to_delete.txt)
+
+            # Continue until the folder is empty
+            local safety=0
+            while [ -d "$folder" ] && [ "$(ls -A "$folder" 2>/dev/null)" ] && [ $safety -lt 50 ]; do
+              safety=$((safety+1))
+              find "$folder" -type f -print0 | head -z -n 100 | while IFS= read -r -d '' file; do
+                git rm -f "$file" 2>/dev/null || rm -f "$file"
+              done
+              # Remove empty subdirectories
+              find "$folder" -type d -empty -delete 2>/dev/null || true
+            done
+            # Final sweep
+            git rm -rf "$folder" 2>/dev/null || rm -rf "$folder" 2>/dev/null
+            rm -f /tmp/files_to_delete.txt
+          }
+
           if [ "$TARGET" = "all" ] || [ -z "$TARGET" ]; then
             echo "Removing entire downloads folder..."
             if [ -d "downloads" ]; then
-              git rm -rf downloads/ 2>/dev/null || true
-              rm -rf downloads/ 2>/dev/null || true
+              batch_delete "downloads"
             fi
 
             mkdir -p downloads
@@ -51,15 +82,14 @@ jobs:
             FOLDER="downloads/$TARGET"
             if [ -d "$FOLDER" ]; then
               echo "Removing folder: $FOLDER"
-              git rm -rf "$FOLDER" 2>/dev/null || true
-              rm -rf "$FOLDER" 2>/dev/null || true
+              batch_delete "$FOLDER"
             else
               echo "Folder '$TARGET' does not exist inside downloads/. Nothing to delete."
               exit 0
             fi
 
-            # If downloads/ becomes empty after this, recreate the minimal README
-            if [ -z "$(ls -A downloads 2>/dev/null)" ]; then
+            # Recreate minimal README if downloads/ is now empty
+            if [ ! -d "downloads" ] || [ -z "$(ls -A downloads 2>/dev/null)" ]; then
               mkdir -p downloads
               printf '## empty\nfor start go Action tab and use left side workflows\n' > downloads/README.md
               git add -f downloads/README.md
@@ -86,7 +116,7 @@ jobs:
               git reset --hard HEAD~1 2>/dev/null || true
               git pull --rebase origin "$BRANCH" 2>/dev/null || true
 
-              # Redo the deletion in case of rebase conflict
+              # Redo deletion in case of rebase conflict
               if [ "$TARGET" = "all" ] || [ -z "$TARGET" ]; then
                 rm -rf downloads/ 2>/dev/null || true
                 mkdir -p downloads
@@ -98,7 +128,7 @@ jobs:
               git commit -m "[AVASAM] Clean downloads – target: $TARGET [skip ci]" 2>/dev/null || true
             }
 
-            if timeout 60 git push origin HEAD:"$BRANCH" 2>&1; then
+            if timeout 120 git push origin HEAD:"$BRANCH" 2>&1; then
               echo ""
               echo "=========================================="
               echo "✅ Folder cleaned successfully!"

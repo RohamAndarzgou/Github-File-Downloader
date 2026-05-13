@@ -4,10 +4,11 @@ name: 🗑 02 - Clean downloads folder
 on:
   workflow_dispatch:
     inputs:
-      warning:
-        description: '⚠️ WARNING: This will DELETE ALL files inside downloads/ folder. Click "Run workflow" only if you are sure.'
+      target:
+        description: '📂 Folder to delete (type "all" to clean everything, or the exact subfolder name)'
         required: false
-        default: 'Read this warning before proceeding'
+        default: 'all'
+        type: string
 
 jobs:
   delete:
@@ -28,32 +29,49 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-      - name: Clean and recreate downloads folder
+      - name: Clean selected folder
         run: |
           BRANCH="${GITHUB_REF_NAME}"
+          TARGET="${{ github.event.inputs.target }}"
 
-          echo "AVASAM (https://avasam.ir) - Cleaning downloads folder"
+          echo "AVASAM (https://avasam.ir) - Cleaning downloads"
           echo ""
 
-          if [ -d "downloads" ]; then
-            echo "Removing downloads folder..."
-            git rm -rf downloads/ 2>/dev/null || true
-            rm -rf downloads/ 2>/dev/null || true
+          if [ "$TARGET" = "all" ] || [ -z "$TARGET" ]; then
+            echo "Removing entire downloads folder..."
+            if [ -d "downloads" ]; then
+              git rm -rf downloads/ 2>/dev/null || true
+              rm -rf downloads/ 2>/dev/null || true
+            fi
+
+            mkdir -p downloads
+            printf '## empty\nfor start go Action tab and use left side workflows\n' > downloads/README.md
+            git add -f downloads/README.md
           else
-            echo "Downloads folder doesn't exist, will create it."
+            FOLDER="downloads/$TARGET"
+            if [ -d "$FOLDER" ]; then
+              echo "Removing folder: $FOLDER"
+              git rm -rf "$FOLDER" 2>/dev/null || true
+              rm -rf "$FOLDER" 2>/dev/null || true
+            else
+              echo "Folder '$TARGET' does not exist inside downloads/. Nothing to delete."
+              exit 0
+            fi
+
+            # If downloads/ becomes empty after this, recreate the minimal README
+            if [ -z "$(ls -A downloads 2>/dev/null)" ]; then
+              mkdir -p downloads
+              printf '## empty\nfor start go Action tab and use left side workflows\n' > downloads/README.md
+              git add -f downloads/README.md
+            fi
           fi
-
-          mkdir -p downloads
-          printf '## empty\nfor start go Action tab and use left side workflows\n' > downloads/README.md
-
-          git add -f downloads/README.md
 
           if git diff --staged --quiet; then
             echo "No changes to commit."
             exit 0
           fi
 
-          git commit -m "[AVASAM] Clean downloads folder [skip ci]"
+          git commit -m "[AVASAM] Clean downloads – target: $TARGET [skip ci]"
 
           echo "Pushing changes..."
 
@@ -68,17 +86,22 @@ jobs:
               git reset --hard HEAD~1 2>/dev/null || true
               git pull --rebase origin "$BRANCH" 2>/dev/null || true
 
-              rm -rf downloads/ 2>/dev/null || true
-              mkdir -p downloads
-              printf '## empty\nfor start go Action tab and use left side workflows\n' > downloads/README.md
-              git add -f downloads/README.md
-              git commit -m "[AVASAM] Clean downloads folder [skip ci]" 2>/dev/null || true
+              # Redo the deletion in case of rebase conflict
+              if [ "$TARGET" = "all" ] || [ -z "$TARGET" ]; then
+                rm -rf downloads/ 2>/dev/null || true
+                mkdir -p downloads
+                printf '## empty\nfor start go Action tab and use left side workflows\n' > downloads/README.md
+                git add -f downloads/README.md
+              else
+                rm -rf "downloads/$TARGET" 2>/dev/null || true
+              fi
+              git commit -m "[AVASAM] Clean downloads – target: $TARGET [skip ci]" 2>/dev/null || true
             }
 
             if timeout 60 git push origin HEAD:"$BRANCH" 2>&1; then
               echo ""
               echo "=========================================="
-              echo "✅ Downloads folder cleared successfully!"
+              echo "✅ Folder cleaned successfully!"
               echo "AVASAM (https://avasam.ir)"
               echo "=========================================="
               exit 0
